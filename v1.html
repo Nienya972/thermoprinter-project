@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Практическая реализация v1: Telegram-бот + мини-компьютер + термопринтер (ESC/POS). Очередь, логи, лимиты." />
+  <title>Практическая реализация v1 — Термопринтер + Telegram-бот</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#content">Перейти к содержанию</a>
+
+  <header>
+    <h1>Практическая реализация (v1)</h1>
+    <p>Альфа-версия прототипа: печать текста через Telegram-бота</p>
+  </header>
+
+  <nav>
+    <a href="index.html">← На главную</a>
+    <a href="#overview">Общие сведения</a>
+    <a href="#purpose">Назначение</a>
+    <a href="#composition">Состав</a>
+    <a href="#architecture">Архитектура</a>
+    <a href="#algorithm">Алгоритм работы</a>
+    <a href="#limits">Ограничения</a>
+    <a href="#reliability">Устойчивость</a>
+    <a href="#tests">Тестирование</a>
+    <a href="#future">Перспективы</a>
+  </nav>
+
+  <main id="content">
+
+    <section id="overview">
+      <h2>1. Общие сведения</h2>
+      <p>
+        Версия <strong>v1</strong> — рабочий прототип системы удалённой печати, где пользователь отправляет текст
+        Telegram-боту, а мини-компьютер (Linux) принимает запросы и печатает на термопринтере через USB.
+      </p>
+      <p>
+        Цель v1 — получить стабильную базовую реализацию (альфа) и показать архитектуру:
+        <em>очередь печати</em>, <em>логирование</em>, <em>ограничение нагрузки</em> и <em>контроль доступа</em>.
+      </p>
+    </section>
+
+    <section id="purpose">
+      <h2>2. Назначение системы</h2>
+      <ul>
+        <li>Приём текстовых сообщений от пользователя через Telegram.</li>
+        <li>Проверка запроса (правила использования, бан-лист, лимиты, фильтрация текста).</li>
+        <li>Запись информации о запросе в журнал (SQLite).</li>
+        <li>Последовательная печать текста на термопринтере (ESC/POS).</li>
+      </ul>
+    </section>
+
+    <section id="composition">
+      <h2>3. Состав системы</h2>
+
+      <h3>3.1 Аппаратная часть</h3>
+      <ul>
+        <li>Мини-компьютер (например, Raspberry Pi / другой Linux-совместимый SBC).</li>
+        <li>Термопринтер 80 мм (USB, ESC/POS).</li>
+        <li>Термобумага 80 мм.</li>
+      </ul>
+
+      <h3>3.2 Программная часть</h3>
+      <ul>
+        <li>Telegram-бот (режим long polling).</li>
+        <li>Core-модуль (управление логикой обработки).</li>
+        <li>Security Layer: согласие с правилами, бан-лист, лимиты (tokens/cooldown), фильтрация текста.</li>
+        <li>Очередь заданий (print queue) и worker печати (print worker).</li>
+        <li>Логирование (SQLite): пользователи, задания, статусы, причины отказов.</li>
+        <li>Драйвер печати ESC/POS.</li>
+      </ul>
+    </section>
+
+    <section id="architecture">
+      <h2>4. Архитектура</h2>
+      <p>Логическая схема компонентов:</p>
+      <pre>Telegram
+  ↓
+Bot Interface
+  ↓
+Security Layer (rules + ban + tokens + filter)
+  ↓
+Print Queue
+  ↓
+Print Worker
+  ↓
+ESC/POS Driver
+  ↓
+Thermal Printer</pre>
+
+      <h3>4.1 Схема работы (рисунок)</h3>
+      <p>
+        Ниже приведена схема прохождения запроса: от сообщения пользователя до печати и записи в лог.
+      </p>
+
+      <div style="overflow:auto;">
+        <svg width="980" height="540" viewBox="0 0 980 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема работы версии v1">
+          <defs>
+            <style>
+              .b { fill:#fff; stroke:#111827; stroke-width:1.3; }
+              .t { font: 16px Arial, Helvetica, sans-serif; fill:#111827; }
+              .s { font: 13px Arial, Helvetica, sans-serif; fill:#374151; }
+              .a { stroke:#111827; stroke-width:1.6; fill:none; marker-end:url(#m); }
+              .n { fill:#f9fafb; stroke:#9ca3af; stroke-width:1; }
+            </style>
+            <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827"/>
+            </marker>
+          </defs>
+
+          <!-- Left column -->
+          <rect class="b" x="40" y="40" rx="14" ry="14" width="260" height="90"/>
+          <text class="t" x="60" y="75">Пользователь</text>
+          <text class="s" x="60" y="102">Отправляет текст боту</text>
+
+          <rect class="b" x="40" y="170" rx="14" ry="14" width="260" height="90"/>
+          <text class="t" x="60" y="205">Telegram API</text>
+          <text class="s" x="60" y="232">Сервера Telegram</text>
+
+          <rect class="b" x="40" y="300" rx="14" ry="14" width="260" height="120"/>
+          <text class="t" x="60" y="335">Мини-компьютер</text>
+          <text class="s" x="60" y="360">Linux + bot.py</text>
+          <text class="s" x="60" y="384">Long polling</text>
+
+          <path class="a" d="M 170 130 L 170 170"/>
+          <path class="a" d="M 170 260 L 170 300"/>
+
+          <!-- Middle -->
+          <rect class="b" x="350" y="60" rx="14" ry="14" width="280" height="80"/>
+          <text class="t" x="370" y="95">Bot Interface</text>
+          <text class="s" x="370" y="120">Получение сообщений</text>
+
+          <rect class="b" x="350" y="160" rx="14" ry="14" width="280" height="120"/>
+          <text class="t" x="370" y="195">Security Layer</text>
+          <text class="s" x="370" y="220">Правила • бан-лист</text>
+          <text class="s" x="370" y="244">Tokens • фильтр</text>
+
+          <rect class="b" x="350" y="300" rx="14" ry="14" width="280" height="90"/>
+          <text class="t" x="370" y="335">Print Queue</text>
+          <text class="s" x="370" y="360">Очередь заданий</text>
+
+          <rect class="b" x="350" y="410" rx="14" ry="14" width="280" height="90"/>
+          <text class="t" x="370" y="445">Print Worker</text>
+          <text class="s" x="370" y="470">Печать по одному</text>
+
+          <!-- Right -->
+          <rect class="b" x="690" y="160" rx="14" ry="14" width="250" height="90"/>
+          <text class="t" x="710" y="195">ESC/POS Driver</text>
+          <text class="s" x="710" y="222">Отправка данных</text>
+
+          <rect class="b" x="690" y="270" rx="14" ry="14" width="250" height="90"/>
+          <text class="t" x="710" y="305">Термопринтер</text>
+          <text class="s" x="710" y="332">80 мм • USB</text>
+
+          <rect class="n" x="690" y="380" rx="14" ry="14" width="250" height="120"/>
+          <text class="t" x="710" y="412">Логи (SQLite)</text>
+          <text class="s" x="710" y="438">user_id • время</text>
+          <text class="s" x="710" y="462">status • reason</text>
+
+          <!-- Arrows between modules -->
+          <path class="a" d="M 300 360 L 350 100"/>
+          <path class="a" d="M 490 140 L 490 160"/>
+          <path class="a" d="M 490 280 L 490 300"/>
+          <path class="a" d="M 490 390 L 490 410"/>
+          <path class="a" d="M 630 455 L 690 205"/>
+          <path class="a" d="M 815 250 L 815 270"/>
+          <path class="a" d="M 630 335 L 690 420"/>
+        </svg>
+      </div>
+    </section>
+
+    <section id="algorithm">
+      <h2>5. Алгоритм работы</h2>
+      <ol>
+        <li>Пользователь отправляет текст Telegram-боту.</li>
+        <li>Проверка согласия с правилами использования.</li>
+        <li>Проверка бан-листа пользователя.</li>
+        <li>Проверка лимитов (tokens/cooldown).</li>
+        <li>Фильтрация текста по стоп-словам и шаблонам.</li>
+        <li>Создание задания печати и запись в журнал.</li>
+        <li>Постановка задания в очередь.</li>
+        <li>Worker печатает задания последовательно.</li>
+        <li>Система обновляет статус и отправляет ответ пользователю.</li>
+      </ol>
+    </section>
+
+    <section id="limits">
+      <h2>6. Ограничения v1</h2>
+      <ul>
+        <li><strong>Только текст.</strong> Печать изображений не входит в v1 (будет добавлено в v2).</li>
+        <li>Ограничение длины сообщения и частоты запросов.</li>
+        <li>Очередь ограничена по размеру, чтобы не допустить бесконечного накопления задач.</li>
+      </ul>
+    </section>
+
+    <section id="reliability">
+      <h2>7. Устойчивость и безопасность</h2>
+
+      <h3>7.1 Ограничение нагрузки (tokens)</h3>
+      <p>
+        Для предотвращения злоупотреблений применяется квотирование по модели <em>token bucket</em>:
+        у каждого пользователя есть баланс токенов, одна печать списывает токены, а затем они
+        восстанавливаются со временем (дополнительно может применяться cooldown).
+      </p>
+
+      <h3>7.2 Очередь печати</h3>
+      <p>
+        Печать выполняется последовательно: все запросы превращаются в задания и обрабатываются worker-ом по одному,
+        что исключает конфликт доступа к принтеру.
+      </p>
+
+      <h3>7.3 Логирование</h3>
+      <p>
+        В SQLite сохраняются: идентификатор пользователя, время запроса, статус выполнения, причина отказа.
+        Это повышает прозрачность и помогает при отладке.
+      </p>
+
+      <h3>7.4 Автовосстановление</h3>
+      <p>
+        Сервис может быть оформлен как демон (systemd) с автоперезапуском при сбое, чтобы исключить ручной контроль.
+      </p>
+    </section>
+
+    <section id="tests">
+      <h2>8. Тестирование (план для v1)</h2>
+      <ul>
+        <li><strong>Burst:</strong> серия запросов от одного пользователя → часть отклоняется по лимитам.</li>
+        <li><strong>Multi-user:</strong> несколько пользователей → задания печатаются последовательно через очередь.</li>
+        <li><strong>Fault:</strong> ошибки принтера (нет бумаги/отключение) → корректное сообщение пользователю и запись в лог.</li>
+      </ul>
+    </section>
+
+    <section id="future">
+      <h2>9. Перспективы развития</h2>
+      <ul>
+        <li>Печать изображений: resize → grayscale → dithering → 1-bit bitmap → ESC/POS.</li>
+        <li>Удалённое управление несколькими устройствами (ID принтера, централизованные логи).</li>
+        <li>Расширенные меры контроля при публичном использовании.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>© Проект «Термопринтер + Telegram-бот» — страница практической реализации v1</p>
+  </footer>
+</body>
+</html>
